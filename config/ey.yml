@@ -1,0 +1,4 @@
+environments:
+  prod_testdata:
+    ignore_database_adapter_warning: true 
+    precompile_assets: true
