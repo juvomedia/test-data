@@ -1,0 +1,94 @@
+upstream unicorn_<%= application %> {
+  server unix:/tmp/unicorn.<%= application %>.sock fail_timeout=0;
+}
+
+<% 
+  default_host = exists?(:nginx_default_host) ? "default" : ""
+%>
+
+server {
+  listen 80 <%= default_host %>;
+<% if nginx_use_ssl %>
+  listen 443 <%= default_host %> ssl;
+  ssl_certificate /etc/ssl/certs/<%= nginx_ssl_certificate %>;
+  ssl_certificate_key /etc/ssl/private/<%= nginx_ssl_certificate_key %>;
+<% end %>
+
+<% if nginx_force_ssl %>
+  if ($scheme != "https") {
+    rewrite ^(.*) https://$host$1 permanent;
+  }
+<% end %>
+
+  access_log <%= shared_path %>/log/nginx.access.log;
+  error_log <%= shared_path %>/log/nginx.error.log;
+
+  server_name <%= nginx_server_name %>;
+  root <%= current_path %>/public;
+  try_files $uri/index.html $uri @unicorn_<%= application %>;
+
+  location @unicorn_<%= application %> {
+    proxy_set_header  X-Real-IP         $remote_addr;
+    proxy_set_header  X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header  X-Forwarded-Proto $scheme; 
+    proxy_set_header  Host              $http_host;
+    #proxy_set_header  X-Request-Start   't=$start_time';
+    #proxy_set_header  X-Queue-Start     't=$start_time';
+
+    proxy_redirect off;
+    proxy_max_temp_file_size 0;
+    proxy_pass http://unicorn_<%= application %>;
+    # limit_req zone=one;
+  }
+
+  location ~ ^/(assets|images|javascripts|stylesheets|swfs|system)/ {
+    gzip_static on;
+    add_header Cache-Control public;
+    add_header Last-Modified "";
+    add_header ETag "";
+
+    open_file_cache max=1000 inactive=500s;
+    open_file_cache_valid 600s;
+    open_file_cache_errors on;
+    try_files  $uri $uri/index.html /last_assets/$uri /last_assets/$uri.html @unicorn_<%= application  %>;
+  }
+
+  client_max_body_size 4G;
+  keepalive_timeout 10;
+
+  error_page 404 /404.html;
+
+  error_page 500 502 504 /500.html;
+  error_page 503 @503;
+  recursive_error_pages on;
+
+  location = /500.html {
+  }
+
+  location = /404.html {
+  }
+
+  location @503 {
+
+    error_page 405 = /system/maintenance.html;
+
+    # Serve static assets if found.
+    if (-f $request_filename) {
+      break;
+    }
+
+    rewrite ^(.*)$ /system/maintenance.html break;
+  }
+
+  if ($request_method !~ ^(GET|HEAD|PUT|POST|DELETE|OPTIONS)$ ){
+    return 405;
+  }
+
+  if (-f $document_root/system/maintenance.html) {
+    return 503;
+  }
+
+  location ~ \.(php|html)$ {
+    return 405;
+  }
+}
